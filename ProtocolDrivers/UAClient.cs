@@ -94,130 +94,106 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
         public object Read(AssetTag tag)
         {
-            object value = null;
+            object rawValue = Read(tag.Address).GetAwaiter().GetResult();
 
-            byte[] tagBytes = Read(tag.Address, 0, null, 0).GetAwaiter().GetResult();
-
-            if ((tagBytes != null) && (tagBytes.Length > 0))
+            if (rawValue == null)
             {
-
-                if (tag.Type == "Float")
-                {
-                    value = BitConverter.ToSingle(tagBytes);
-                }
-                else if (tag.Type == "Boolean")
-                {
-                    value = BitConverter.ToBoolean(tagBytes);
-                }
-                else if (tag.Type == "Integer")
-                {
-                    value = BitConverter.ToInt32(tagBytes);
-                }
-                else if (tag.Type == "String")
-                {
-                    value = Encoding.UTF8.GetString(tagBytes);
-                }
-                else
-                {
-                    throw new ArgumentException("Type not supported by OPC UA.");
-                }
+                return null;
             }
 
-            return value;
+            try
+            {
+                return tag.Type switch
+                {
+                    "Float" => Convert.ToSingle(rawValue),
+                    "Boolean" => Convert.ToBoolean(rawValue),
+                    "Integer" => Convert.ToInt32(rawValue),
+                    "String" => Convert.ToString(rawValue),
+                    _ => rawValue
+                };
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Failed to convert OPC UA value for tag {tag.Name}: {ex.Message}", ex);
+                return null;
+            }
         }
 
         public void Write(AssetTag tag, string value)
         {
-            byte[] tagBytes = null;
+            object typedValue;
             if (tag.Type == "Float")
             {
-                tagBytes = BitConverter.GetBytes(float.Parse(value));
+                typedValue = float.Parse(value);
             }
             else if (tag.Type == "Boolean")
             {
-                tagBytes = BitConverter.GetBytes(bool.Parse(value));
+                typedValue = bool.Parse(value);
             }
             else if (tag.Type == "Integer")
             {
-                tagBytes = BitConverter.GetBytes(int.Parse(value));
+                typedValue = int.Parse(value);
             }
             else if (tag.Type == "String")
             {
-                tagBytes = Encoding.UTF8.GetBytes(value);
+                typedValue = value;
             }
             else
             {
                 throw new ArgumentException("Type not supported by OPC UA.");
             }
 
-            Write(tag.Address, 0, string.Empty, tagBytes, false).GetAwaiter().GetResult();
+            Write(tag.Address, typedValue).GetAwaiter().GetResult();
         }
 
-        private Task<byte[]> Read(string addressWithinAsset, byte unitID, string function, ushort count)
+        private Task<object> Read(string addressWithinAsset)
         {
             if (_session != null)
             {
                 var nodeId = ExpandedNodeId.ToNodeId(new ExpandedNodeId(addressWithinAsset), _session.NamespaceUris);
                 var value = _session.ReadValue(nodeId);
 
-#pragma warning disable SYSLIB0011
-                BinaryFormatter bf = new();
-                using (MemoryStream ms = new())
-                {
-                    bf.Serialize(ms, value.Value);
-#pragma warning restore SYSLIB0011
-
-                    return Task.FromResult(ms.ToArray());
-                }
+                return Task.FromResult(value.Value);
             }
             else
             {
-                return Task.FromResult(new byte[0]);
+                return Task.FromResult<object>(null);
             }
         }
 
-        private Task Write(string addressWithinAsset, byte unitID, string function, byte[] values, bool singleBitOnly)
+        private Task Write(string addressWithinAsset, object value)
         {
-            using (MemoryStream memStream = new(values))
+            WriteValue nodeToWrite = new()
             {
-#pragma warning disable SYSLIB0011
-                BinaryFormatter binForm = new();
+                NodeId = new NodeId(addressWithinAsset),
+                Value = new DataValue(new Variant(value))
+            };
 
-                var value = binForm.Deserialize(memStream);
-#pragma warning restore SYSLIB0011
+            WriteValueCollection nodesToWrite = new(){ nodeToWrite };
 
-                WriteValue nodeToWrite = new()
-                {
-                    NodeId = new NodeId(addressWithinAsset),
-                    Value = new DataValue(new Variant(value))
-                };
+            RequestHeader requestHeader = new()
+            {
+                ReturnDiagnostics = (uint)DiagnosticsMasks.All
+            };
 
-                WriteValueCollection nodesToWrite = new(){ nodeToWrite };
+            StatusCodeCollection results = null;
+            DiagnosticInfoCollection diagnosticInfos = null;
 
-                RequestHeader requestHeader = new()
-                {
-                    ReturnDiagnostics = (uint)DiagnosticsMasks.All
-                };
+            var responseHeader = _session.Write(
+                requestHeader,
+                nodesToWrite,
+                out results,
+                out diagnosticInfos);
 
-                StatusCodeCollection results = null;
-                DiagnosticInfoCollection diagnosticInfos = null;
+            ClientBase.ValidateResponse(results, nodesToWrite);
+            ClientBase.ValidateDiagnosticInfos(diagnosticInfos, nodesToWrite);
 
-                var responseHeader = _session.Write(
-                    requestHeader,
-                    nodesToWrite,
-                    out results,
-                    out diagnosticInfos);
-
-                ClientBase.ValidateResponse(results, nodesToWrite);
-                ClientBase.ValidateDiagnosticInfos(diagnosticInfos, nodesToWrite);
-
-                if (StatusCode.IsBad(results[0]))
-                {
-                    throw ServiceResultException.Create(results[0], 0, diagnosticInfos, responseHeader.StringTable);
-                }
-
-                return Task.CompletedTask;
+            if (StatusCode.IsBad(results[0]))
+            {
+                throw ServiceResultException.Create(results[0], 0, diagnosticInfos, responseHeader.StringTable);
             }
+
+            return Task.CompletedTask;
         }
 
         private async Task ConnectSessionAsync(string endpointUrl, string username, string password)

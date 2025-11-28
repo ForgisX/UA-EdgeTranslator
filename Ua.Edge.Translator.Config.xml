@@ -83,10 +83,18 @@
 
   <ServerConfiguration>
     <BaseAddresses>
-      <ua:String>opc.tcp://localhost:4840/UA/UAEdgeTranslator</ua:String>
+      <ua:String>opc.tcp://0.0.0.0:4840/UA/UAEdgeTranslator</ua:String>
     </BaseAddresses>
+    <AlternateBaseAddresses>
+      <ua:String>opc.tcp://localhost:4840/UA/UAEdgeTranslator</ua:String>
+      <ua:String>opc.tcp://ua-translator:4840/UA/UAEdgeTranslator</ua:String>
+    </AlternateBaseAddresses>
 
     <SecurityPolicies>
+      <ServerSecurityPolicy>
+        <SecurityMode>None_1</SecurityMode>
+        <SecurityPolicyUri>http://opcfoundation.org/UA/SecurityPolicy#None</SecurityPolicyUri>
+      </ServerSecurityPolicy>
       <ServerSecurityPolicy>
         <SecurityMode>SignAndEncrypt_3</SecurityMode>
         <SecurityPolicyUri>http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256</SecurityPolicyUri>
@@ -100,7 +108,12 @@
     <UserTokenPolicies>
       <ua:UserTokenPolicy>
         <ua:TokenType>UserName_1</ua:TokenType>
-        <!-- passwords must be encrypted - this specifies what algorithm to use -->
+        <!-- allow insecure for local testing with Telegraf -->
+        <ua:SecurityPolicyUri>http://opcfoundation.org/UA/SecurityPolicy#None</ua:SecurityPolicyUri>
+      </ua:UserTokenPolicy>
+      <ua:UserTokenPolicy>
+        <ua:TokenType>UserName_1</ua:TokenType>
+        <!-- secure option retained -->
         <ua:SecurityPolicyUri>http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256</ua:SecurityPolicyUri>
       </ua:UserTokenPolicy>
     </UserTokenPolicies>

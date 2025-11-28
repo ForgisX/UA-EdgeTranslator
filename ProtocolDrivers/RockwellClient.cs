@@ -15,6 +15,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
     public class RockwellClient : IAsset
     {
         private string _endpoint = string.Empty;
+        private int _port = 44818; // Default Ethernet/IP port
 
         public List<string> Discover()
         {
@@ -212,21 +213,53 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
         {
             try
             {
-                _endpoint = ipAddress;
-
-                Tag tags = new()
+                // Resolve hostname to IP address if needed (libplctag may require IP address)
+                string resolvedAddress = ipAddress;
+                if (!IPAddress.TryParse(ipAddress, out _))
                 {
-                    Gateway = ipAddress,
-                    Path = "1,0",
-                    PlcType = PlcType.ControlLogix,
-                    Protocol = Protocol.ab_eip,
-                    Name = "@tags",
-                    Timeout = TimeSpan.FromSeconds(10),
-                };
+                    // It's a hostname, resolve it to IP address
+                    try
+                    {
+                        var hostEntry = Dns.GetHostEntry(ipAddress);
+                        if (hostEntry.AddressList.Length > 0)
+                        {
+                            resolvedAddress = hostEntry.AddressList[0].ToString();
+                            Log.Logger.Information($"Resolved hostname {ipAddress} to IP address {resolvedAddress}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Logger.Warning($"Failed to resolve hostname {ipAddress}: {ex.Message}. Using hostname directly.");
+                    }
+                }
 
-                tags.Read();
+                _endpoint = resolvedAddress;
+                // Use provided port, or default to 44818 for Ethernet/IP if port is 0 or invalid
+                _port = (port > 0) ? port : 44818;
 
-                Log.Logger.Information("Connected to Rockwell ControlLogix PLC at " + ipAddress);
+                // Try to connect by reading a simple tag to verify connectivity
+                // If @tags doesn't work, we'll still allow the connection (some simulators don't support it)
+                try
+                {
+                    Tag tags = new()
+                    {
+                        Gateway = _endpoint,
+                        Path = "1,0",
+                        PlcType = PlcType.ControlLogix,
+                        Protocol = Protocol.ab_eip,
+                        Name = "@tags",
+                        Timeout = TimeSpan.FromSeconds(5),
+                    };
+
+                    tags.Read();
+                    Log.Logger.Information($"Connected to Rockwell ControlLogix PLC at {_endpoint}:{_port} (tag list accessible)");
+                }
+                catch (Exception ex)
+                {
+                    // Some simulators (like cpppo) may not support @tags, but we can still connect
+                    Log.Logger.Warning($"Could not read tag list from {_endpoint}:{_port}, but connection may still work: {ex.Message}");
+                    Log.Logger.Information($"Connected to Rockwell ControlLogix PLC at {_endpoint}:{_port} (assuming connection works)");
+                }
             }
             catch (Exception ex)
             {
@@ -409,7 +442,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
         public string GetRemoteEndpoint()
         {
-            return _endpoint;
+            return $"{_endpoint}:{_port}";
         }
 
         public object Read(AssetTag tag)
@@ -422,13 +455,63 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             {
                 if (!addressParts[0].StartsWith("Cxn:Standard:"))
                 {
-                    byte[] tagBytes = Read(addressParts[0], byte.Parse(addressParts[1]), tag.Type, 0).GetAwaiter().GetResult();
+                    string tagName = addressParts[0];
+                    int offset = int.Parse(addressParts[1]);
+                    byte[] tagBytes = null;
+                    
+                    // Generic approach: Try both array notation and scalar tag reading
+                    // libplctag supports array notation like "TagName[index]" for array elements
+                    // For scalar tags, use the tag name directly with offset 0
+                    
+                    // First, try array notation if offset suggests an array element access
+                    // This is a generic approach that works for any array tag
+                    if (offset >= 0)
+                    {
+                        string arrayTagName = $"{tagName}[{offset}]";
+                        try
+                        {
+                            // Try reading as array element first (libplctag handles array notation)
+                            tagBytes = Read(arrayTagName, 0, tag.Type, 0).GetAwaiter().GetResult();
+                            if (tagBytes != null && tagBytes.Length > 0)
+                            {
+                                Log.Logger.Debug($"Read tag {arrayTagName} as array element: {tagBytes.Length} bytes");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // Array notation failed, try as scalar tag
+                            Log.Logger.Debug($"Array notation failed for {arrayTagName}, trying as scalar tag: {ex.Message}");
+                        }
+                    }
+                    
+                    // If array notation didn't work or returned empty, try as scalar tag
+                    if (tagBytes == null || tagBytes.Length == 0)
+                    {
+                        try
+                        {
+                            // For scalar tags, use tag name directly with offset 0
+                            // libplctag's offset parameter is for byte offset within the tag data
+                            tagBytes = Read(tagName, 0, tag.Type, 0).GetAwaiter().GetResult();
+                            if (tagBytes != null && tagBytes.Length > 0)
+                            {
+                                Log.Logger.Debug($"Read tag {tagName} as scalar: {tagBytes.Length} bytes");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Logger.Error($"Failed to read tag {tagName}: {ex.Message}");
+                        }
+                    }
                     
                     if ((tagBytes != null) && (tagBytes.Length > 0))
                     {
+                        // Debug: Log the raw bytes to see what we're actually receiving
+                        Log.Logger.Debug($"Tag {tagName} raw bytes: [{string.Join(", ", tagBytes.Select(b => $"0x{b:X2}"))}]");
+                        
                         if (tag.Type == "BOOL")
                         {
                             value = BitConverter.ToBoolean(tagBytes);
+                            Log.Logger.Debug($"Tag {tagName} converted BOOL value: {value}");
                         }
                         else if (tag.Type == "SINT")
                         {
@@ -441,6 +524,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         else if (tag.Type == "DINT")
                         {
                             value = BitConverter.ToInt32(tagBytes);
+                            Log.Logger.Debug($"Tag {tagName} converted DINT value: {value}");
                         }
                         else if (tag.Type == "LINT")
                         {
@@ -465,6 +549,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         else if (tag.Type == "REAL")
                         {
                             value = BitConverter.ToSingle(tagBytes);
+                            Log.Logger.Debug($"Tag {tagName} converted REAL value: {value}");
                         }
                         else if (tag.Type == "LREAL")
                         {
@@ -474,6 +559,10 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         {
                             throw new ArgumentException("Type not supported by Ethernet/IP.");
                         }
+                    }
+                    else
+                    {
+                        Log.Logger.Warning($"Tag {tagName} returned null or empty bytes");
                     }
                 }
             }
@@ -540,11 +629,18 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
         private Task<byte[]> Read(string addressWithinAsset, byte unitID, string function, ushort count)
         {
+            // libplctag supports array notation in the tag name like "Scada[0]"
+            // For scalar tags, just use the tag name like "Pressure"
+            // We pass the tag name as-is to libplctag, which handles array notation internally
+            string tagName = addressWithinAsset;
+            
+            // For nested structures, split by '.' and take the first part
             var addressParts = addressWithinAsset.Split('.');
+            tagName = addressParts[0];
 
             var tag = new Tag()
             {
-                Name = addressParts[0],
+                Name = tagName,  // libplctag will handle array notation like "Scada[0]" automatically
                 Gateway = _endpoint,
                 Path = "1,0",
                 PlcType = PlcType.ControlLogix,
@@ -553,11 +649,18 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
             tag.Read();
 
-            int offset = unitID;
+            // For scalar tags, always use offset 0
+            // For array tags with notation like "Scada[0]", libplctag handles the indexing
+            // but we still need to use offset 0 since the index is in the tag name
+            int offset = 0;
 
             switch (function)
             {
-                case "BOOL": return Task.FromResult(BitConverter.GetBytes(tag.GetBit(offset)));
+                case "BOOL": 
+                    // GetBit uses bit offset
+                    // For scalar tags, use bit 0
+                    // For array tags like "Scada[0]", libplctag handles the indexing, use bit 0
+                    return Task.FromResult(BitConverter.GetBytes(tag.GetBit(offset)));
                 case "SINT": return Task.FromResult(new byte[] { (byte) tag.GetInt8(offset) } );
                 case "INT": return Task.FromResult(BitConverter.GetBytes(tag.GetInt16(offset)));
                 case "DINT": return Task.FromResult(BitConverter.GetBytes(tag.GetInt32(offset)));
@@ -566,8 +669,14 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                 case "UINT": return Task.FromResult(BitConverter.GetBytes(tag.GetUInt16(offset)));
                 case "UDINT": return Task.FromResult(BitConverter.GetBytes(tag.GetUInt32(offset)));
                 case "ULINT": return Task.FromResult(BitConverter.GetBytes(tag.GetUInt64(offset)));
-                case "REAL": return Task.FromResult(BitConverter.GetBytes(tag.GetFloat32(offset)));
-                case "LREAL": return Task.FromResult(BitConverter.GetBytes(tag.GetFloat64(offset)));
+                case "REAL": 
+                    // GetFloat32 uses byte offset
+                    // For scalar tags, offset should be 0
+                    return Task.FromResult(BitConverter.GetBytes(tag.GetFloat32(offset)));
+                case "LREAL": 
+                    // GetFloat64 uses byte offset
+                    // For scalar tags, offset should be 0
+                    return Task.FromResult(BitConverter.GetBytes(tag.GetFloat64(offset)));
                 default: return Task.FromResult((byte[]) null);
             }
         }

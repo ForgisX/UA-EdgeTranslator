@@ -1,5 +1,6 @@
 namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 {
+    using Opc.Ua.Edge.Translator;
     using Opc.Ua.Edge.Translator.Interfaces;
     using Opc.Ua.Edge.Translator.Models;
     using Serilog;
@@ -104,12 +105,16 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
                 if (result == 0)
                 {
-                    Log.Logger.Information("Connected to Siemens S7");
+                    Log.Logger.Information($"Connected to Siemens S7 at {ipAddress}:{port}");
+                }
+                else
+                {
+                    Log.Logger.Error($"Failed to connect to Siemens S7 at {ipAddress}:{port}, error code: {result}");
                 }
             }
             catch (Exception ex)
             {
-                Log.Logger.Error(ex.Message, ex);
+                Log.Logger.Error($"Exception connecting to Siemens S7 at {ipAddress}:{port}: {ex.Message}", ex);
             }
         }
 
@@ -129,46 +134,151 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
         public object Read(AssetTag tag)
         {
-            string[] addressParts = tag.Address.Split(['?', '&', '=']);
+            // Parse S7 address format: "DB{number}?{byteOffset}" or "DB{number}"
+            // Examples: "DB1?0", "DB1?4", "DB2?10"
+            int dbNumber = 1;
+            int byteOffset = 0;
+            int byteCount = 0;
 
-            object value = null;
-
-            if (addressParts.Length == 2)
+            try
             {
-                byte[] tagBytes = Read(addressParts[0], 0, null, ushort.Parse(addressParts[1])).GetAwaiter().GetResult();
-
-                if ((tagBytes != null) && (tagBytes.Length > 0))
+                string[] addressParts = tag.Address.Split(['?', '&', '=']);
+                
+                if (addressParts.Length >= 1)
                 {
-
-                    if (tag.Type == "Float")
+                    // Extract DB number from address like "DB1" or "DB1?0"
+                    string dbPart = addressParts[0];
+                    if (dbPart.StartsWith("DB", StringComparison.OrdinalIgnoreCase))
                     {
-                        value = BitConverter.ToSingle(tagBytes);
-                    }
-                    else if (tag.Type == "Boolean")
-                    {
-                        value = BitConverter.ToBoolean(tagBytes);
-                    }
-                    else if (tag.Type == "Integer")
-                    {
-                        value = BitConverter.ToInt32(tagBytes);
-                    }
-                    else if (tag.Type == "String")
-                    {
-                        value = Encoding.UTF8.GetString(tagBytes);
+                        string dbNumberStr = dbPart.Substring(2);
+                        if (int.TryParse(dbNumberStr, out int parsedDbNumber))
+                        {
+                            dbNumber = parsedDbNumber;
+                        }
+                        else
+                        {
+                            Log.Logger.Error($"Failed to parse DB number from '{dbPart}', extracted '{dbNumberStr}'");
+                            return null;
+                        }
                     }
                     else
                     {
-                        throw new ArgumentException("Type not supported by Siemens.");
+                        Log.Logger.Error($"S7 address does not start with 'DB': '{tag.Address}'");
+                        return null;
+                    }
+                    
+                    // Extract byte offset if present
+                    if (addressParts.Length >= 2)
+                    {
+                        if (int.TryParse(addressParts[1], out int parsedOffset))
+                        {
+                            byteOffset = parsedOffset;
+                        }
+                        else
+                        {
+                            Log.Logger.Warning($"Failed to parse byte offset from '{addressParts[1]}', using 0");
+                        }
                     }
                 }
-            }
 
-            return value;
+                // Determine byte count based on data type
+                byteCount = GetDataTypeByteSize(tag.Type);
+
+                Log.Logger.Debug($"S7 Read: DB={dbNumber}, Offset={byteOffset}, Count={byteCount}, Type={tag.Type}");
+
+                object value = null;
+
+                if (byteCount > 0)
+                {
+                    byte[] tagBytes = Read(dbNumber, byteOffset, byteCount).GetAwaiter().GetResult();
+
+                    if ((tagBytes != null) && (tagBytes.Length > 0))
+                    {
+                        // S7 protocol uses big-endian (network byte order)
+                        // C# BitConverter uses little-endian, so we need to swap bytes for multi-byte values
+                        byte[] swappedBytes = tagBytes;
+                        if (tag.Type == "Float" || tag.Type == "Integer")
+                        {
+                            // Swap bytes for Float (4 bytes) and Integer (2 or 4 bytes)
+                            swappedBytes = ByteSwapper.Swap(tagBytes, false);
+                        }
+
+                        if (tag.Type == "Float")
+                        {
+                            value = BitConverter.ToSingle(swappedBytes);
+                        }
+                        else if (tag.Type == "Boolean")
+                        {
+                            // For boolean, read single byte and check if non-zero
+                            value = tagBytes[0] != 0;
+                        }
+                        else if (tag.Type == "Integer")
+                        {
+                            // For integer, read as Int16 (2 bytes) or Int32 (4 bytes) based on size
+                            if (byteCount == 2)
+                            {
+                                value = BitConverter.ToInt16(swappedBytes);
+                            }
+                            else
+                            {
+                                value = BitConverter.ToInt32(swappedBytes);
+                            }
+                        }
+                        else if (tag.Type == "String")
+                        {
+                            value = Encoding.UTF8.GetString(tagBytes).TrimEnd('\0');
+                        }
+                        else
+                        {
+                            throw new ArgumentException($"Type not supported by Siemens: {tag.Type}");
+                        }
+                    }
+                }
+
+                return value;
+            }
+            catch (FormatException ex)
+            {
+                Log.Logger.Error($"Format exception parsing S7 address '{tag.Address}': {ex.Message}");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Error reading S7 tag '{tag.Address}': {ex.Message}", ex);
+                return null;
+            }
         }
 
         public void Write(AssetTag tag, string value)
         {
+            // Parse S7 address format: "DB{number}?{byteOffset}" or "DB{number}"
+            int dbNumber = 1;
+            int byteOffset = 0;
+
             string[] addressParts = tag.Address.Split(['?', '&', '=']);
+            
+            if (addressParts.Length >= 1)
+            {
+                // Extract DB number from address like "DB1" or "DB1?0"
+                string dbPart = addressParts[0];
+                if (dbPart.StartsWith("DB", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(dbPart.Substring(2), out int parsedDbNumber))
+                    {
+                        dbNumber = parsedDbNumber;
+                    }
+                }
+                
+                // Extract byte offset if present
+                if (addressParts.Length >= 2)
+                {
+                    if (int.TryParse(addressParts[1], out int parsedOffset))
+                    {
+                        byteOffset = parsedOffset;
+                    }
+                }
+            }
+
             byte[] tagBytes = null;
 
             if (tag.Type == "Float")
@@ -177,11 +287,20 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             }
             else if (tag.Type == "Boolean")
             {
-                tagBytes = BitConverter.GetBytes(bool.Parse(value));
+                tagBytes = new byte[] { (byte)(bool.Parse(value) ? 1 : 0) };
             }
             else if (tag.Type == "Integer")
             {
-                tagBytes = BitConverter.GetBytes(int.Parse(value));
+                // Determine if Int16 or Int32 based on value size
+                int intValue = int.Parse(value);
+                if (intValue >= short.MinValue && intValue <= short.MaxValue)
+                {
+                    tagBytes = BitConverter.GetBytes((short)intValue);
+                }
+                else
+                {
+                    tagBytes = BitConverter.GetBytes(intValue);
+                }
             }
             else if (tag.Type == "String")
             {
@@ -189,24 +308,70 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             }
             else
             {
-                throw new ArgumentException("Type not supported by Siemens.");
+                throw new ArgumentException($"Type not supported by Siemens: {tag.Type}");
             }
 
-            Write(addressParts[0], 0, string.Empty, tagBytes, false).GetAwaiter().GetResult();
+            Write(dbNumber, byteOffset, tagBytes).GetAwaiter().GetResult();
         }
 
 
-        private Task<byte[]> Read(string addressWithinAsset, byte unitID, string function, ushort count)
+        private Task<byte[]> Read(int dbNumber, int byteOffset, int byteCount)
         {
-            var buffer = new byte[count];
-            _S7.DBRead(unitID, int.Parse(addressWithinAsset), count, buffer);
-            return Task.FromResult(buffer);
+            if (_S7 == null)
+            {
+                Log.Logger.Error("S7 client is not connected");
+                return Task.FromResult((byte[])null);
+            }
+
+            try
+            {
+                var buffer = new byte[byteCount];
+                // Sharp7 DBRead signature: DBRead(int DBNumber, int Start, int Size, byte[] Buffer)
+                // Parameters: DBNumber (1-based), Start (byte offset), Size (bytes to read), Buffer (output)
+                Log.Logger.Debug($"Calling S7.DBRead with: dbNumber={dbNumber} (type: {dbNumber.GetType()}), byteOffset={byteOffset}, byteCount={byteCount}");
+                int result = _S7.DBRead(dbNumber, byteOffset, byteCount, buffer);
+                if (result != 0)
+                {
+                    Log.Logger.Error($"S7 DBRead failed for DB{dbNumber} at offset {byteOffset}, size {byteCount}: error code {result}");
+                    return Task.FromResult((byte[])null);
+                }
+                Log.Logger.Debug($"S7 DBRead succeeded: read {buffer.Length} bytes");
+                return Task.FromResult(buffer);
+            }
+            catch (FormatException ex)
+            {
+                Log.Logger.Error($"Format exception in S7 DBRead for DB{dbNumber} at offset {byteOffset}: {ex.Message}. Stack trace: {ex.StackTrace}");
+                return Task.FromResult((byte[])null);
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Exception in S7 DBRead for DB{dbNumber} at offset {byteOffset}: {ex.Message}. Stack trace: {ex.StackTrace}", ex);
+                return Task.FromResult((byte[])null);
+            }
         }
 
-        private Task Write(string addressWithinAsset, byte unitID, string function, byte[] values, bool singleBitOnly)
+        private Task Write(int dbNumber, int byteOffset, byte[] values)
         {
-            _S7.DBWrite(unitID, int.Parse(addressWithinAsset), values.Length, values);
+            // Sharp7 DBWrite returns an error code (0 = success)
+            int result = _S7.DBWrite(dbNumber, byteOffset, values.Length, values);
+            if (result != 0)
+            {
+                Log.Logger.Error($"S7 DBWrite failed for DB{dbNumber} at offset {byteOffset}: error code {result}");
+                throw new Exception($"S7 DBWrite failed with error code {result}");
+            }
             return Task.CompletedTask;
+        }
+
+        private int GetDataTypeByteSize(string dataType)
+        {
+            return dataType switch
+            {
+                "Boolean" => 1,
+                "Integer" => 2,  // Default to Int16 (2 bytes), can be Int32 (4 bytes) if needed
+                "Float" => 4,
+                "String" => 256,  // Default string length, should be configurable
+                _ => 4  // Default to 4 bytes
+            };
         }
 
         public string ExecuteAction(MethodState method, IList<object> inputArgs, ref IList<object> outputArgs)
@@ -215,3 +380,4 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
         }
     }
 }
+

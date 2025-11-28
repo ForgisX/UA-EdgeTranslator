@@ -1198,8 +1198,9 @@ namespace Opc.Ua.Edge.Translator
                 }
 
                 // check if we can reach the Ethernet/IP asset
+                // Ethernet/IP uses port 44818 by default
                 RockwellClient client = new();
-                client.Connect(address[3], 0);
+                client.Connect(address[3], 44818);
 
                 assetInterface = client;
             }
