@@ -91,3 +91,4 @@ private readonly ILogger _logger = ClientLogger.ForClient("MyClient");
 - Colors use ANSI escape codes, which work in most modern terminals
 - If your terminal doesn't support colors, the escape codes will be visible but harmless
 
+

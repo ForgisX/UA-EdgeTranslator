@@ -44,3 +44,4 @@ namespace Opc.Ua.Edge.Translator.Logging
     }
 }
 
+
