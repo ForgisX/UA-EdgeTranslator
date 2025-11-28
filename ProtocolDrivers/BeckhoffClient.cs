@@ -2,6 +2,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 {
     using Opc.Ua.Edge.Translator.Interfaces;
     using Opc.Ua.Edge.Translator.Models;
+    using Opc.Ua.Edge.Translator.Logging;
     using Serilog;
     using System;
     using System.Collections.Generic;
@@ -20,7 +21,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
     TC2: Go to Properties/AMS Router/Remote Computers and restart TwinCAT
     TC3: Go to Router/Edit routes.
     TcAmsRemoteMgr: Windows CE devices can be configured locally (TC2 requires a TwinCAT restart). Tool location: /Hard Disk/System/TcAmsRemoteMgr.exe
-    IPC Diagnose: Beckhoff IPC’s provide a web interface for diagnose and configuration.
+    IPC Diagnose: Beckhoff IPCï¿½s provide a web interface for diagnose and configuration.
     Further information: http://infosys.beckhoff.de/content/1033/devicemanager/index.html?id=286
 
     Sample AMS route:
@@ -35,6 +36,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
     public class BeckhoffClient : IAsset
     {
+        private readonly ILogger _logger = ClientLogger.ForClient("ADS");
         private AdsClient _adsClient = null;
 
         private string _endpoint = string.Empty;
@@ -82,7 +84,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
                     var result = _adsClient.ReadDeviceInfoAsync().GetAwaiter().GetResult();
 
-                    Log.Logger.Information("Connected to Beckhoff TwinCAT ADS PLC: " + result.ToString());
+                    _logger.Information("Connected to Beckhoff TwinCAT ADS PLC: " + result.ToString());
                 }
                 else
                 {
@@ -91,7 +93,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             }
             catch (Exception ex)
             {
-                Log.Logger.Error(ex.Message, ex);
+                _logger.Error(ex.Message, ex);
             }
         }
 

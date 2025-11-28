@@ -112,8 +112,8 @@ namespace Opc.Ua.Edge.Translator
                 Directory.CreateDirectory(pathToLogFile);
             }
 
-            // set logging sinks
-            loggerConfiguration.WriteTo.Console();
+            // set logging sinks with color-coded client types
+            loggerConfiguration.WriteTo.Console(new ClientTypeColorFormatter());
             loggerConfiguration.WriteTo.File(Path.Combine(pathToLogFile, "uaedgetranslator.logfile.txt"), fileSizeLimitBytes: 1024 * 1024, rollOnFileSizeLimit: true, retainedFileCountLimit: 10);
 
             Log.Logger = loggerConfiguration.CreateLogger();

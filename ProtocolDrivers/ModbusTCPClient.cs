@@ -2,6 +2,7 @@
 {
     using Opc.Ua.Edge.Translator.Interfaces;
     using Opc.Ua.Edge.Translator.Models;
+    using Opc.Ua.Edge.Translator.Logging;
     using Serilog;
     using System;
     using System.Collections.Generic;
@@ -12,6 +13,7 @@
 
     class ModbusTCPClient : IAsset
     {
+        private readonly ILogger _logger = ClientLogger.ForClient("Modbus");
         public enum FunctionCode : byte
         {
             ReadCoilStatus = 1,
@@ -81,9 +83,18 @@
 
         public void Connect(string ipAddress, int port)
         {
-            _tcpClient = new TcpClient(ipAddress, port);
-            _tcpClient.GetStream().ReadTimeout = _timeout;
-            _tcpClient.GetStream().WriteTimeout = _timeout;
+            try
+            {
+                _tcpClient = new TcpClient(ipAddress, port);
+                _tcpClient.GetStream().ReadTimeout = _timeout;
+                _tcpClient.GetStream().WriteTimeout = _timeout;
+                _logger.Information($"Connected to Modbus TCP device at {ipAddress}:{port}");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"Failed to connect to Modbus TCP device at {ipAddress}:{port}: {ex.Message}", ex);
+                throw;
+            }
         }
 
         public string GetRemoteEndpoint()
@@ -95,6 +106,7 @@
         {
             if (_tcpClient != null)
             {
+                _logger.Debug("Disconnecting from Modbus TCP device");
                 _tcpClient.Close();
                 _tcpClient = null;
             }
@@ -115,6 +127,7 @@
             if ((addressParts.Length == 3) && (addressParts[1] == "quantity"))
             {
                 ushort quantity = ushort.Parse(addressParts[2]);
+                _logger.Debug($"Reading Modbus {functionCode} at address {addressParts[0]}, quantity={quantity}, unitID={tag.UnitID}");
                 byte[] tagBytes = Read(addressParts[0], tag.UnitID, functionCode.ToString(), quantity).GetAwaiter().GetResult();
 
                 if ((tagBytes != null) && tag.IsBigEndian)
@@ -134,7 +147,34 @@
                     }
                     else if (tag.Type == "Integer")
                     {
-                        value = BitConverter.ToInt32(tagBytes);
+                        // Handle different register counts:
+                        // quantity=1: 2 bytes (16-bit register) -> Int16
+                        // quantity=2: 4 bytes (32-bit from 2 registers) -> Int32
+                        if (quantity == 1 && tagBytes.Length == 2)
+                        {
+                            value = BitConverter.ToInt16(tagBytes);
+                        }
+                        else if (quantity == 2 && tagBytes.Length == 4)
+                        {
+                            value = BitConverter.ToInt32(tagBytes);
+                        }
+                        else
+                        {
+                            // Fallback: try Int32 if bytes match, otherwise Int16
+                            if (tagBytes.Length == 4)
+                            {
+                                value = BitConverter.ToInt32(tagBytes);
+                            }
+                            else if (tagBytes.Length == 2)
+                            {
+                                value = BitConverter.ToInt16(tagBytes);
+                            }
+                            else
+                            {
+                                _logger.Error($"Unexpected byte length for Integer type: {tagBytes.Length} bytes (expected 2 or 4)");
+                                throw new ArgumentException($"Unexpected byte length for Integer type: {tagBytes.Length} bytes (expected 2 or 4)");
+                            }
+                        }
                     }
                     else if (tag.Type == "String")
                     {
@@ -142,9 +182,20 @@
                     }
                     else
                     {
+                        _logger.Error($"Type not supported by Modbus: {tag.Type}");
                         throw new ArgumentException("Type not supported by Modbus.");
                     }
+                    
+                    _logger.Debug($"Modbus read successful: address={addressParts[0]}, type={tag.Type}, value={value}");
                 }
+                else
+                {
+                    _logger.Warning($"Modbus read returned no data for address {addressParts[0]}");
+                }
+            }
+            else
+            {
+                _logger.Warning($"Invalid Modbus address format: {tag.Address}");
             }
 
             return value;

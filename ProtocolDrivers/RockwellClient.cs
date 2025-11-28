@@ -3,6 +3,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
     using libplctag;
     using Opc.Ua.Edge.Translator.Interfaces;
     using Opc.Ua.Edge.Translator.Models;
+    using Opc.Ua.Edge.Translator.Logging;
     using Serilog;
     using System;
     using System.Collections.Generic;
@@ -14,6 +15,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
     public class RockwellClient : IAsset
     {
+        private readonly ILogger _logger = ClientLogger.ForClient("CIP");
         private string _endpoint = string.Empty;
         private int _port = 44818; // Default Ethernet/IP port
 
@@ -47,7 +49,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         var receiveEndPoint = new IPEndPoint(IPAddress.Any, 0xAF12);
                         var response = udpClient.Receive(ref receiveEndPoint);
 
-                        Log.Logger.Information($"Ethernet/IP discovery: Received response from {receiveEndPoint.Address}");
+                        _logger.Information($"Ethernet/IP discovery: Received response from {receiveEndPoint.Address}");
 
                         assets.Add("eip://" + receiveEndPoint.Address.ToString());
                     }
@@ -151,7 +153,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                     var udt = DecodeUdtInfo(udtTag);
                     foreach (var f in udt.Fields)
                     {
-                        Log.Logger.Information($"EIP Tag: Id={tag.Name} Name={udt.Name} FieldName={f.Name} Offset={f.Offset} Metadata={f.Metadata} Type=" + ParseDataType(f.Type));
+                        _logger.Information($"EIP Tag: Id={tag.Name} Name={udt.Name} FieldName={f.Name} Offset={f.Offset} Metadata={f.Metadata} Type=" + ParseDataType(f.Type));
 
                         string propertyName = tag.Name + "." + udt.Name + "." + f.Name;
 
@@ -179,7 +181,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                 }
                 else
                 {
-                    Log.Logger.Information($"EIP Tag: Id={tag.Name} Type=" + ParseDataType(tag.Type));
+                    _logger.Information($"EIP Tag: Id={tag.Name} Type=" + ParseDataType(tag.Type));
 
                     string properyName = tag.Name;
 
@@ -224,12 +226,12 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         if (hostEntry.AddressList.Length > 0)
                         {
                             resolvedAddress = hostEntry.AddressList[0].ToString();
-                            Log.Logger.Information($"Resolved hostname {ipAddress} to IP address {resolvedAddress}");
+                            _logger.Information($"Resolved hostname {ipAddress} to IP address {resolvedAddress}");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Log.Logger.Warning($"Failed to resolve hostname {ipAddress}: {ex.Message}. Using hostname directly.");
+                        _logger.Warning($"Failed to resolve hostname {ipAddress}: {ex.Message}. Using hostname directly.");
                     }
                 }
 
@@ -252,18 +254,18 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                     };
 
                     tags.Read();
-                    Log.Logger.Information($"Connected to Rockwell ControlLogix PLC at {_endpoint}:{_port} (tag list accessible)");
+                    _logger.Information($"Connected to Rockwell ControlLogix PLC at {_endpoint}:{_port} (tag list accessible)");
                 }
                 catch (Exception ex)
                 {
                     // Some simulators (like cpppo) may not support @tags, but we can still connect
-                    Log.Logger.Warning($"Could not read tag list from {_endpoint}:{_port}, but connection may still work: {ex.Message}");
-                    Log.Logger.Information($"Connected to Rockwell ControlLogix PLC at {_endpoint}:{_port} (assuming connection works)");
+                    _logger.Warning($"Could not read tag list from {_endpoint}:{_port}, but connection may still work: {ex.Message}");
+                    _logger.Information($"Connected to Rockwell ControlLogix PLC at {_endpoint}:{_port} (assuming connection works)");
                 }
             }
             catch (Exception ex)
             {
-                Log.Logger.Error(ex.Message, ex);
+                _logger.Error(ex.Message, ex);
             }
         }
 
@@ -474,13 +476,13 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                             tagBytes = Read(arrayTagName, 0, tag.Type, 0).GetAwaiter().GetResult();
                             if (tagBytes != null && tagBytes.Length > 0)
                             {
-                                Log.Logger.Debug($"Read tag {arrayTagName} as array element: {tagBytes.Length} bytes");
+                                _logger.Debug($"Read tag {arrayTagName} as array element: {tagBytes.Length} bytes");
                             }
                         }
                         catch (Exception ex)
                         {
                             // Array notation failed, try as scalar tag
-                            Log.Logger.Debug($"Array notation failed for {arrayTagName}, trying as scalar tag: {ex.Message}");
+                            _logger.Debug($"Array notation failed for {arrayTagName}, trying as scalar tag: {ex.Message}");
                         }
                     }
                     
@@ -494,24 +496,24 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                             tagBytes = Read(tagName, 0, tag.Type, 0).GetAwaiter().GetResult();
                             if (tagBytes != null && tagBytes.Length > 0)
                             {
-                                Log.Logger.Debug($"Read tag {tagName} as scalar: {tagBytes.Length} bytes");
+                                _logger.Debug($"Read tag {tagName} as scalar: {tagBytes.Length} bytes");
                             }
                         }
                         catch (Exception ex)
                         {
-                            Log.Logger.Error($"Failed to read tag {tagName}: {ex.Message}");
+                            _logger.Error($"Failed to read tag {tagName}: {ex.Message}");
                         }
                     }
                     
                     if ((tagBytes != null) && (tagBytes.Length > 0))
                     {
                         // Debug: Log the raw bytes to see what we're actually receiving
-                        Log.Logger.Debug($"Tag {tagName} raw bytes: [{string.Join(", ", tagBytes.Select(b => $"0x{b:X2}"))}]");
+                        _logger.Debug($"Tag {tagName} raw bytes: [{string.Join(", ", tagBytes.Select(b => $"0x{b:X2}"))}]");
                         
                         if (tag.Type == "BOOL")
                         {
                             value = BitConverter.ToBoolean(tagBytes);
-                            Log.Logger.Debug($"Tag {tagName} converted BOOL value: {value}");
+                            _logger.Debug($"Tag {tagName} converted BOOL value: {value}");
                         }
                         else if (tag.Type == "SINT")
                         {
@@ -524,7 +526,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         else if (tag.Type == "DINT")
                         {
                             value = BitConverter.ToInt32(tagBytes);
-                            Log.Logger.Debug($"Tag {tagName} converted DINT value: {value}");
+                            _logger.Debug($"Tag {tagName} converted DINT value: {value}");
                         }
                         else if (tag.Type == "LINT")
                         {
@@ -549,7 +551,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         else if (tag.Type == "REAL")
                         {
                             value = BitConverter.ToSingle(tagBytes);
-                            Log.Logger.Debug($"Tag {tagName} converted REAL value: {value}");
+                            _logger.Debug($"Tag {tagName} converted REAL value: {value}");
                         }
                         else if (tag.Type == "LREAL")
                         {
@@ -562,7 +564,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                     }
                     else
                     {
-                        Log.Logger.Warning($"Tag {tagName} returned null or empty bytes");
+                        _logger.Warning($"Tag {tagName} returned null or empty bytes");
                     }
                 }
             }

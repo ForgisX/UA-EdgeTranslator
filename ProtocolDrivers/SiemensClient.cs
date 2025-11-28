@@ -3,6 +3,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
     using Opc.Ua.Edge.Translator;
     using Opc.Ua.Edge.Translator.Interfaces;
     using Opc.Ua.Edge.Translator.Models;
+    using Opc.Ua.Edge.Translator.Logging;
     using Serilog;
     using Sharp7;
     using System;
@@ -12,6 +13,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
     public class SiemensClient : IAsset
     {
+        private readonly ILogger _logger = ClientLogger.ForClient("S7");
         private S7Client _S7 = null;
 
         private string _endpoint = string.Empty;
@@ -56,7 +58,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                 }
                 catch (Exception ex)
                 {
-                    Log.Logger.Error(ex.Message, ex);
+                    _logger.Error(ex.Message, ex);
                     break;
                 }
 
@@ -73,7 +75,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                     Type = TypeString.String,
                 };
 
-                Log.Logger.Information("S7 DB" + i.ToString() + ": " + BitConverter.ToString(buffer, 0, sizeRead));
+                _logger.Information("S7 DB" + i.ToString() + ": " + BitConverter.ToString(buffer, 0, sizeRead));
 
                 Property property = new()
                 {
@@ -105,16 +107,16 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
                 if (result == 0)
                 {
-                    Log.Logger.Information($"Connected to Siemens S7 at {ipAddress}:{port}");
+                    _logger.Information($"Connected to Siemens S7 at {ipAddress}:{port}");
                 }
                 else
                 {
-                    Log.Logger.Error($"Failed to connect to Siemens S7 at {ipAddress}:{port}, error code: {result}");
+                    _logger.Error($"Failed to connect to Siemens S7 at {ipAddress}:{port}, error code: {result}");
                 }
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Exception connecting to Siemens S7 at {ipAddress}:{port}: {ex.Message}", ex);
+                _logger.Error($"Exception connecting to Siemens S7 at {ipAddress}:{port}: {ex.Message}", ex);
             }
         }
 
@@ -157,13 +159,13 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         }
                         else
                         {
-                            Log.Logger.Error($"Failed to parse DB number from '{dbPart}', extracted '{dbNumberStr}'");
+                            _logger.Error($"Failed to parse DB number from '{dbPart}', extracted '{dbNumberStr}'");
                             return null;
                         }
                     }
                     else
                     {
-                        Log.Logger.Error($"S7 address does not start with 'DB': '{tag.Address}'");
+                        _logger.Error($"S7 address does not start with 'DB': '{tag.Address}'");
                         return null;
                     }
                     
@@ -176,7 +178,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                         }
                         else
                         {
-                            Log.Logger.Warning($"Failed to parse byte offset from '{addressParts[1]}', using 0");
+                            _logger.Warning($"Failed to parse byte offset from '{addressParts[1]}', using 0");
                         }
                     }
                 }
@@ -184,7 +186,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                 // Determine byte count based on data type
                 byteCount = GetDataTypeByteSize(tag.Type);
 
-                Log.Logger.Debug($"S7 Read: DB={dbNumber}, Offset={byteOffset}, Count={byteCount}, Type={tag.Type}");
+                _logger.Debug($"S7 Read: DB={dbNumber}, Offset={byteOffset}, Count={byteCount}, Type={tag.Type}");
 
                 object value = null;
 
@@ -239,12 +241,12 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             }
             catch (FormatException ex)
             {
-                Log.Logger.Error($"Format exception parsing S7 address '{tag.Address}': {ex.Message}");
+                _logger.Error($"Format exception parsing S7 address '{tag.Address}': {ex.Message}");
                 return null;
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Error reading S7 tag '{tag.Address}': {ex.Message}", ex);
+                _logger.Error($"Error reading S7 tag '{tag.Address}': {ex.Message}", ex);
                 return null;
             }
         }
@@ -319,7 +321,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
         {
             if (_S7 == null)
             {
-                Log.Logger.Error("S7 client is not connected");
+                _logger.Error("S7 client is not connected");
                 return Task.FromResult((byte[])null);
             }
 
@@ -328,24 +330,24 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                 var buffer = new byte[byteCount];
                 // Sharp7 DBRead signature: DBRead(int DBNumber, int Start, int Size, byte[] Buffer)
                 // Parameters: DBNumber (1-based), Start (byte offset), Size (bytes to read), Buffer (output)
-                Log.Logger.Debug($"Calling S7.DBRead with: dbNumber={dbNumber} (type: {dbNumber.GetType()}), byteOffset={byteOffset}, byteCount={byteCount}");
+                _logger.Debug($"Calling S7.DBRead with: dbNumber={dbNumber} (type: {dbNumber.GetType()}), byteOffset={byteOffset}, byteCount={byteCount}");
                 int result = _S7.DBRead(dbNumber, byteOffset, byteCount, buffer);
                 if (result != 0)
                 {
-                    Log.Logger.Error($"S7 DBRead failed for DB{dbNumber} at offset {byteOffset}, size {byteCount}: error code {result}");
+                    _logger.Error($"S7 DBRead failed for DB{dbNumber} at offset {byteOffset}, size {byteCount}: error code {result}");
                     return Task.FromResult((byte[])null);
                 }
-                Log.Logger.Debug($"S7 DBRead succeeded: read {buffer.Length} bytes");
+                _logger.Debug($"S7 DBRead succeeded: read {buffer.Length} bytes");
                 return Task.FromResult(buffer);
             }
             catch (FormatException ex)
             {
-                Log.Logger.Error($"Format exception in S7 DBRead for DB{dbNumber} at offset {byteOffset}: {ex.Message}. Stack trace: {ex.StackTrace}");
+                _logger.Error($"Format exception in S7 DBRead for DB{dbNumber} at offset {byteOffset}: {ex.Message}. Stack trace: {ex.StackTrace}");
                 return Task.FromResult((byte[])null);
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Exception in S7 DBRead for DB{dbNumber} at offset {byteOffset}: {ex.Message}. Stack trace: {ex.StackTrace}", ex);
+                _logger.Error($"Exception in S7 DBRead for DB{dbNumber} at offset {byteOffset}: {ex.Message}. Stack trace: {ex.StackTrace}", ex);
                 return Task.FromResult((byte[])null);
             }
         }
@@ -356,7 +358,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             int result = _S7.DBWrite(dbNumber, byteOffset, values.Length, values);
             if (result != 0)
             {
-                Log.Logger.Error($"S7 DBWrite failed for DB{dbNumber} at offset {byteOffset}: error code {result}");
+                _logger.Error($"S7 DBWrite failed for DB{dbNumber} at offset {byteOffset}: error code {result}");
                 throw new Exception($"S7 DBWrite failed with error code {result}");
             }
             return Task.CompletedTask;

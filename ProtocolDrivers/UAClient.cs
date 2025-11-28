@@ -5,6 +5,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
     using Opc.Ua.Client.ComplexTypes;
     using Opc.Ua.Edge.Translator.Interfaces;
     using Opc.Ua.Edge.Translator.Models;
+    using Opc.Ua.Edge.Translator.Logging;
     using Serilog;
     using System;
     using System.Collections.Generic;
@@ -15,6 +16,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
     public class UAClient : IAsset
     {
+        private readonly ILogger _logger = ClientLogger.ForClient("OPCUA");
         private ISession _session = null;
         private string _endpoint = string.Empty;
 
@@ -38,7 +40,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                 var servers = client.FindServers(null);
                 foreach (var server in servers)
                 {
-                    Log.Logger.Information($"Server: {server.ApplicationName}");
+                    _logger.Information($"Server: {server.ApplicationName}");
                     foreach (var endpoint in server.DiscoveryUrls)
                     {
                         discoveredServers.Add(endpoint);
@@ -114,7 +116,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Failed to convert OPC UA value for tag {tag.Name}: {ex.Message}", ex);
+                _logger.Error($"Failed to convert OPC UA value for tag {tag.Name}: {ex.Message}", ex);
                 return null;
             }
         }
@@ -236,7 +238,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             }
             catch (Exception ex)
             {
-                Log.Logger.Error(ex.Message, ex);
+                _logger.Error(ex.Message, ex);
                 return;
             }
 
@@ -263,7 +265,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             }
             catch (Exception ex)
             {
-                Log.Logger.Error(ex.Message, ex);
+                _logger.Error(ex.Message, ex);
             }
         }
 
@@ -330,7 +332,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                 }
                 catch (Exception ex)
                 {
-                    Log.Logger.Error(ex.Message, ex);
+                    _logger.Error(ex.Message, ex);
                 }
             }
         }
