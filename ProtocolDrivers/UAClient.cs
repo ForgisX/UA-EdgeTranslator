@@ -75,8 +75,17 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
         public void Connect(string ipAddress, int port)
         {
             var url = "opc.tcp://" + ipAddress + ":" + port;
+            _logger.Information($"Connecting to OPC UA server at {url}");
             var username = Environment.GetEnvironmentVariable("OPCUA_CLIENT_USERNAME");
             var password = Environment.GetEnvironmentVariable("OPCUA_CLIENT_PASSWORD");
+            if (string.IsNullOrEmpty(username))
+            {
+                _logger.Debug("Using anonymous authentication for OPC UA connection");
+            }
+            else
+            {
+                _logger.Debug($"Using username/password authentication for OPC UA connection");
+            }
             ConnectSessionAsync(url, username, password).GetAwaiter().GetResult();
         }
 
@@ -96,12 +105,16 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
 
         public object Read(AssetTag tag)
         {
+            _logger.Debug($"Reading OPC UA tag: {tag.Name} from address: {tag.Address}");
             object rawValue = Read(tag.Address).GetAwaiter().GetResult();
 
             if (rawValue == null)
             {
+                _logger.Warning($"OPC UA read returned null for tag {tag.Name} at address {tag.Address}");
                 return null;
             }
+            
+            _logger.Debug($"OPC UA read successful: tag={tag.Name}, value={rawValue}");
 
             try
             {
@@ -152,13 +165,28 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
         {
             if (_session != null)
             {
-                var nodeId = ExpandedNodeId.ToNodeId(new ExpandedNodeId(addressWithinAsset), _session.NamespaceUris);
-                var value = _session.ReadValue(nodeId);
+                try
+                {
+                    var nodeId = ExpandedNodeId.ToNodeId(new ExpandedNodeId(addressWithinAsset), _session.NamespaceUris);
+                    _logger.Debug($"Reading OPC UA node: {nodeId} (from address: {addressWithinAsset})");
+                    var value = _session.ReadValue(nodeId);
+                    
+                    if (value.StatusCode != StatusCodes.Good)
+                    {
+                        _logger.Warning($"OPC UA read returned bad status code: {value.StatusCode} for node {nodeId}");
+                    }
 
-                return Task.FromResult(value.Value);
+                    return Task.FromResult(value.Value);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Exception reading OPC UA node {addressWithinAsset}: {ex.Message}", ex);
+                    return Task.FromResult<object>(null);
+                }
             }
             else
             {
+                _logger.Error("OPC UA session is null, cannot read node");
                 return Task.FromResult<object>(null);
             }
         }
@@ -235,10 +263,11 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                     userIdentity,
                     null
                 ).ConfigureAwait(false);
+                _logger.Information($"Successfully connected to OPC UA server at {endpointUrl}");
             }
             catch (Exception ex)
             {
-                _logger.Error(ex.Message, ex);
+                _logger.Error($"Failed to connect to OPC UA server at {endpointUrl}: {ex.Message}", ex);
                 return;
             }
 
