@@ -68,6 +68,12 @@ namespace Opc.Ua.Edge.Translator
             // check if we have a trusted issuer cert yet
             bool provisioningMode = (Directory.EnumerateFiles(Path.Combine(Directory.GetCurrentDirectory(), "pki", "issuer", "certs")).Count() == 0);
 
+            // Use the environment variable to determine if we are in provisioning mode
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("IGNORE_PROVISIONING_MODE")))
+            {
+                provisioningMode = true;
+            }
+
             // we allow conections in provisoning mode, but limit access to the server
             if ((e.Error.StatusCode == StatusCodes.BadCertificateUntrusted) && provisioningMode)
             {

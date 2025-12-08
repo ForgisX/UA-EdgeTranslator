@@ -187,7 +187,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             else
             {
                 _logger.Error("OPC UA session is null, cannot read node");
-                return Task.FromResult<object>(null);
+                throw new Exception("OPC UA session is null, cannot read node");
             }
         }
 
@@ -268,7 +268,7 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
             catch (Exception ex)
             {
                 _logger.Error($"Failed to connect to OPC UA server at {endpointUrl}: {ex.Message}", ex);
-                return;
+                throw;
             }
 
             // enable diagnostics
