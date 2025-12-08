@@ -63,7 +63,8 @@
       <StoreType>Directory</StoreType>
       <StorePath>./pki/rejected</StorePath>
     </RejectedCertificateStore>
-    <AutoAcceptUntrustedCertificates>false</AutoAcceptUntrustedCertificates>
+    <!-- Enable auto-accept so new client certs like Telegraf are trusted without manual moves -->
+    <AutoAcceptUntrustedCertificates>true</AutoAcceptUntrustedCertificates>
     <RejectSHA1SignedCertificates>true</RejectSHA1SignedCertificates>
     <MinimumCertificateKeySize>1024</MinimumCertificateKeySize>
   </SecurityConfiguration>
@@ -88,9 +89,15 @@
     <AlternateBaseAddresses>
       <ua:String>opc.tcp://localhost:4840/UA/UAEdgeTranslator</ua:String>
       <ua:String>opc.tcp://ua-translator:4840/UA/UAEdgeTranslator</ua:String>
+      <ua:String>opc.tcp://UAEdgeTranslator:4840/UA/UAEdgeTranslator</ua:String>
+      <ua:String>opc.tcp://uaedgetranslator:4840/UA/UAEdgeTranslator</ua:String>
     </AlternateBaseAddresses>
 
     <SecurityPolicies>
+      <ServerSecurityPolicy>
+        <SecurityMode>None_1</SecurityMode>
+        <SecurityPolicyUri>http://opcfoundation.org/UA/SecurityPolicy#None</SecurityPolicyUri>
+      </ServerSecurityPolicy>
       <ServerSecurityPolicy>
         <SecurityMode>SignAndEncrypt_3</SecurityMode>
         <SecurityPolicyUri>http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256</SecurityPolicyUri>

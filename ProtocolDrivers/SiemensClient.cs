@@ -14,6 +14,8 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
     public class SiemensClient : IAsset
     {
         private readonly ILogger _logger = ClientLogger.ForClient("S7");
+        
+        // S7 client comes from the Sharp7 library
         private S7Client _S7 = null;
 
         private string _endpoint = string.Empty;
@@ -112,6 +114,10 @@ namespace Opc.Ua.Edge.Translator.ProtocolDrivers
                 else
                 {
                     _logger.Error($"Failed to connect to Siemens S7 at {ipAddress}:{port}, error code: {result}");
+
+                    // Use ErroText function to get the error message
+                    string errorMessage = _S7.ErrorText(result);
+                    _logger.Error($"Error message: {errorMessage}");
                 }
             }
             catch (Exception ex)
